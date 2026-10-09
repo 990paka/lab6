@@ -1,0 +1,387 @@
+import 'dart:math';
+
+import 'package:flutter/material.dart';
+
+/// true  - матрица из таблицы 1 отчёта (для скриншотов и проверки сценариев);
+/// false - случайная матрица при каждом запуске, как в задании.
+const bool useFixedMatrix = true;
+
+void main() => runApp(const Lab6App());
+
+// ======================================================================
+// Модель
+// ======================================================================
+
+/// Множество прав S = {Чтение, Запись, Передача прав}.
+enum Right {
+  read('read', 'Чтение'),
+  write('write', 'Запись'),
+  grant('grant', 'Передача прав');
+
+  const Right(this.key, this.ru);
+  final String key;
+  final String ru;
+}
+
+/// Дискреционная модель: matrix[пользователь][номер объекта] = множество прав.
+class AccessModel {
+  static const ok = 'Операция выполнена успешно.';
+  static const errRights = 'Ошибка: недостаточно прав.';
+
+  final List<String> users;
+  final int nObjects;
+  final String admin;
+  final Map<String, Map<int, Set<Right>>> _matrix = {};
+
+  AccessModel({
+    required this.users,
+    required this.nObjects,
+    required this.admin,
+    required bool random,
+  }) {
+    final rnd = Random();
+    for (final u in users) {
+      final row = <int, Set<Right>>{};
+      for (var o = 1; o <= nObjects; o++) {
+        if (u == admin) {
+          row[o] = Right.values.toSet();
+        } else if (random) {
+          row[o] = Right.values.where((_) => rnd.nextDouble() < 0.5).toSet();
+        } else {
+          row[o] = <Right>{};
+        }
+      }
+      _matrix[u] = row;
+    }
+  }
+
+  /// Вариант 2: 4 пользователя, 4 объекта.
+  factory AccessModel.variant2({required bool fixed}) {
+    final m = AccessModel(
+      users: ['Ivan', 'Sergey', 'Boris', 'Anna'],
+      nObjects: 4,
+      admin: 'Ivan',
+      random: !fixed,
+    );
+    if (fixed) {
+      const r = Right.read, w = Right.write, g = Right.grant;
+      m._set('Sergey', 1, {g});
+      m._set('Sergey', 2, {r});
+      m._set('Sergey', 3, {w});
+      m._set('Sergey', 4, {g});
+
+      m._set('Boris', 1, {r, w});
+      m._set('Boris', 3, {r, w, g});
+      m._set('Boris', 4, {r, w, g});
+
+      m._set('Anna', 1, {r});
+      m._set('Anna', 2, {w, g});
+      m._set('Anna', 3, {r, w});
+      m._set('Anna', 4, {g});
+    }
+    return m;
+  }
+
+  void _set(String user, int obj, Set<Right> rights) =>
+      _matrix[user]![obj] = rights;
+
+  Set<Right> _cell(String user, int obj) => _matrix[user]![obj]!;
+
+  bool _validObject(int? obj) => obj != null && obj >= 1 && obj <= nObjects;
+
+  String get _errObject => 'Ошибка: объекта с таким номером нет (1..$nObjects).';
+
+  bool hasUser(String name) => _matrix.containsKey(name);
+
+  String rightsText(Set<Right> rights) {
+    if (rights.isEmpty) return 'Запрещено';
+    if (rights.length == Right.values.length) return 'Полный доступ';
+    return Right.values.where(rights.contains).map((r) => r.ru).join(', ');
+  }
+
+  // ---------------------------------------------------------- команды
+
+  String showRights(String user) {
+    final sb = StringBuffer('Ваши права:\n');
+    _matrix[user]!.forEach((obj, rights) {
+      sb.writeln('Объект$obj: ${rightsText(rights)}');
+    });
+    return sb.toString().trimRight();
+  }
+
+  String showMatrix(String user) {
+    if (user != admin) return errRights;
+    final sb = StringBuffer('Матрица доступа:\n');
+    _matrix.forEach((u, row) {
+      sb.writeln(u);
+      row.forEach((obj, rights) {
+        sb.writeln('  Объект$obj: ${rightsText(rights)}');
+      });
+    });
+    return sb.toString().trimRight();
+  }
+
+  /// read / write
+  String access(String user, int? obj, Right right) {
+    if (!_validObject(obj)) return _errObject;
+    return _cell(user, obj!).contains(right) ? ok : errRights;
+  }
+
+  /// Передача права другому пользователю.
+  String grant(String user, int? obj, Right right, String target) {
+    if (!_validObject(obj)) return _errObject;
+    final own = _cell(user, obj!);
+    if (!own.contains(Right.grant)) return errRights;
+    if (!own.contains(right)) {
+      return 'Ошибка: нельзя передать право, которым вы не обладаете.';
+    }
+    final name = target.trim();
+    if (!hasUser(name)) return 'Ошибка: пользователь не найден.';
+    _cell(name, obj).add(right);
+    return ok;
+  }
+
+  /// Собственная функция: отзыв права у другого пользователя.
+  String revoke(String user, int? obj, Right right, String target) {
+    if (!_validObject(obj)) return _errObject;
+    if (!_cell(user, obj!).contains(Right.grant)) return errRights;
+    final name = target.trim();
+    if (!hasUser(name)) return 'Ошибка: пользователь не найден.';
+    if (name == admin) return 'Ошибка: права администратора отозвать нельзя.';
+    final targetRights = _cell(name, obj);
+    if (!targetRights.contains(right)) {
+      return 'У пользователя и так нет этого права.';
+    }
+    targetRights.remove(right);
+    return ok;
+  }
+}
+
+// ======================================================================
+// Интерфейс
+// ======================================================================
+
+class Lab6App extends StatelessWidget {
+  const Lab6App({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Лабораторная 6',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(colorSchemeSeed: Colors.indigo, useMaterial3: true),
+      home: const HomePage(),
+    );
+  }
+}
+
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  final AccessModel _model = AccessModel.variant2(fixed: useFixedMatrix);
+
+  final _userCtrl = TextEditingController();
+  final _objectCtrl = TextEditingController();
+  final _targetCtrl = TextEditingController();
+  final _scroll = ScrollController();
+
+  final StringBuffer _log = StringBuffer();
+  String? _currentUser;
+  Right _right = Right.read;
+
+  @override
+  void dispose() {
+    _userCtrl.dispose();
+    _objectCtrl.dispose();
+    _targetCtrl.dispose();
+    _scroll.dispose();
+    super.dispose();
+  }
+
+  // ---------------------------------------------------------- вывод
+
+  void _print(String text) {
+    setState(() => _log.writeln(text));
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scroll.hasClients) {
+        _scroll.jumpTo(_scroll.position.maxScrollExtent);
+      }
+    });
+  }
+
+  int? get _objectInput => int.tryParse(_objectCtrl.text.trim());
+  String get _objText => _objectInput?.toString() ?? '?';
+
+  // ---------------------------------------------------------- идентификация
+
+  void _login() {
+    final name = _userCtrl.text.trim();
+    _print('User: $name');
+    if (!_model.hasUser(name)) {
+      _print('Идентификация не пройдена.\n');
+      return;
+    }
+    _print('Идентификация успешна, добро пожаловать в систему.\n');
+    _print('${_model.showRights(name)}\n');
+    setState(() => _currentUser = name);
+  }
+
+  void _logout() {
+    _print('> quit');
+    _print('Выход из системы.\n');
+    setState(() => _currentUser = null);
+    _userCtrl.clear();
+  }
+
+  // ---------------------------------------------------------- команды
+
+  void _doAccess(Right right) {
+    _print('> ${right.key} (объект $_objText)');
+    _print('${_model.access(_currentUser!, _objectInput, right)}\n');
+  }
+
+  void _doGrant() {
+    final target = _targetCtrl.text;
+    _print('> grant (объект $_objText, право ${_right.key}, получатель $target)');
+    _print('${_model.grant(_currentUser!, _objectInput, _right, target)}\n');
+  }
+
+  void _doRevoke() {
+    final target = _targetCtrl.text;
+    _print('> revoke (объект $_objText, право ${_right.key}, пользователь $target)');
+    _print('${_model.revoke(_currentUser!, _objectInput, _right, target)}\n');
+  }
+
+  void _doRights() {
+    _print('> rights');
+    _print('${_model.showRights(_currentUser!)}\n');
+  }
+
+  void _doMatrix() {
+    _print('> matrix');
+    _print('${_model.showMatrix(_currentUser!)}\n');
+  }
+
+  // ---------------------------------------------------------- виджеты
+
+  Widget _loginPanel() {
+    return Row(
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _userCtrl,
+            decoration: const InputDecoration(labelText: 'User'),
+            onSubmitted: (_) => _login(),
+          ),
+        ),
+        const SizedBox(width: 12),
+        FilledButton(onPressed: _login, child: const Text('Войти')),
+      ],
+    );
+  }
+
+  Widget _commandPanel() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Текущий пользователь: $_currentUser',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _objectCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: 'Номер объекта'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: DropdownButtonFormField<Right>(
+                value: _right,
+                decoration: const InputDecoration(labelText: 'Право'),
+                items: [
+                  for (final r in Right.values)
+                    DropdownMenuItem(value: r, child: Text(r.key)),
+                ],
+                onChanged: (r) => setState(() => _right = r ?? _right),
+              ),
+            ),
+          ],
+        ),
+        TextField(
+          controller: _targetCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Пользователь (для grant / revoke)',
+          ),
+        ),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            FilledButton(onPressed: () => _doAccess(Right.read), child: const Text('read')),
+            FilledButton(onPressed: () => _doAccess(Right.write), child: const Text('write')),
+            FilledButton(onPressed: _doGrant, child: const Text('grant')),
+            FilledButton(onPressed: _doRevoke, child: const Text('revoke')),
+            FilledButton(onPressed: _doRights, child: const Text('rights')),
+            FilledButton(onPressed: _doMatrix, child: const Text('matrix')),
+            OutlinedButton(onPressed: _logout, child: const Text('quit')),
+          ],
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Дискреционная модель')),
+      body: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Вариант 2: пользователей - ${_model.users.length}, '
+                'объектов - ${_model.nObjects}\n'
+                'Пользователи: ${_model.users.join(', ')} '
+                '(администратор: ${_model.admin})',
+                style: const TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 8),
+              _currentUser == null ? _loginPanel() : _commandPanel(),
+              const SizedBox(height: 8),
+              Expanded(
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(8),
+                  color: const Color(0xFFEEEEEE),
+                  child: SingleChildScrollView(
+                    controller: _scroll,
+                    child: SelectableText(
+                      _log.toString(),
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 13,
+                        color: Colors.black,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
